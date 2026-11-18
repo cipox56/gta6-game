@@ -31,6 +31,7 @@ then open http://localhost:8080.
 - Open city to explore on foot and by car: roads, buildings, parks, beach and marina
 - Traffic cars and pedestrians, cars to steal and drive
 - Wanted level (0–5 stars) with police pursuit cars, sirens and ramming
+- Police helicopter air support at 4-5 stars: a searchlight tracks you and your wanted level stops cooling down while it is overhead
 - Six story missions: deliveries, getaways, fares, a chase and a bank heist
 - HUD with cash, health, wanted stars, mission timer and a live minimap
 - Combat (punch), particles, skid marks, synthesized WebAudio sound and music

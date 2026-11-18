@@ -35,7 +35,8 @@ export class Player {
     else this.updateDriving(dt, input, city, game);
     // Wanted decays only while no police can see the player.
     if (this.wanted > 0) {
-      const seen = game.police.some((p) => dist2(p.x, p.y, this.x, this.y) < 520 * 520);
+      const seen = game.police.some((p) => dist2(p.x, p.y, this.x, this.y) < 520 * 520)
+        || (game.helicopters || []).some((h) => dist2(h.x, h.y, this.x, this.y) < 700 * 700);
       if (seen) { this.unseenTimer = 0; this.wantedHeat = 1; }
       else {
         this.unseenTimer += dt;

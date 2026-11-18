@@ -77,13 +77,13 @@ export function stageShot(game, name) {
     game.banner('Mission complete!', 'Package Run — you earned $500.', 30);
     return;
   }
-  // Default: 'chase' — the cover shot. Driving fast east on the 1200 road, 3 stars,
-  // police on the tail, traffic ahead, mission marker on the minimap.
+  // Default: 'chase' — the cover shot. Driving fast east on the 1200 road, 4 stars,
+  // police on the tail, a helicopter overhead, traffic ahead, mission marker on the minimap.
   game.state = 'playing';
   givePlayerCar(game, 1200, 1200, 0, '#e74c3c');
   game.camera.x = 1200;
   game.camera.y = 1200;
-  p.addWanted(3);
+  p.addWanted(4);
   p.cash = 1250;
   game.missions.index = 1;
   game.missions.phase = 'active';

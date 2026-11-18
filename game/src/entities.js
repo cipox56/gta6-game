@@ -116,3 +116,34 @@ export class PoliceCar {
     city.collideCircle(this, 20);
   }
 }
+
+// Police helicopter air support at wanted level 4-5. It hovers above the
+// player with lag and a searchlight; it never damages the player.
+export class Helicopter {
+  constructor(x, y, rng) {
+    this.x = x;
+    this.y = y;
+    this.angle = 0;
+    this.rotor = 0;
+    this.bobPhase = rng ? rng.next() * 6 : 0;
+  }
+  update(dt, tx, ty) {
+    // Chase a point offset from the player, with lag: slower than a fleeing car.
+    const hx = tx - 120;
+    const hy = ty - 120;
+    const dx = hx - this.x;
+    const dy = hy - this.y;
+    const d = Math.hypot(dx, dy);
+    const maxStep = 420 * dt;
+    if (d > 0) {
+      const step = Math.min(d, maxStep);
+      this.x += (dx / d) * step;
+      this.y += (dy / d) * step;
+    }
+    this.angle = Math.atan2(ty - this.y, tx - this.x);
+    this.rotor += dt * 25;
+    this.bobPhase += dt * 2;
+    this.x = clamp(this.x, 40, CFG.worldSize - 40);
+    this.y = clamp(this.y, 40, CFG.worldSize - 40);
+  }
+}

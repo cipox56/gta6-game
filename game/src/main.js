@@ -4,7 +4,7 @@
 import { CFG } from './config.js';
 import { Rng } from './random.js';
 import { City } from './world.js';
-import { Pedestrian, TrafficCar, PoliceCar } from './entities.js';
+import { Pedestrian, TrafficCar, PoliceCar, Helicopter } from './entities.js';
 import { Player } from './player.js';
 import { MissionManager } from './missions.js';
 import { Particles } from './particles.js';
@@ -26,6 +26,7 @@ export class Game {
     this.peds = [];
     this.traffic = [];
     this.police = [];
+    this.helicopters = [];
     this.particles = new Particles();
     this.sound = new SoundEngine();
     this.missions = new MissionManager(this);
@@ -69,6 +70,7 @@ export class Game {
   startNew() {
     this.player = new Player(this.city.garage.x + 120, this.city.garage.y + 40);
     this.police = [];
+    this.helicopters = [];
     this.particles = new Particles();
     this.missions = new MissionManager(this);
     this.state = 'playing';
@@ -206,6 +208,17 @@ export class Game {
     }
   }
 
+  updateHelicopters(dt) {
+    if (this.player.wanted >= 4) {
+      if (this.helicopters.length === 0) {
+        this.helicopters.push(new Helicopter(this.player.x - 300, this.player.y - 300, this.rng));
+      }
+    } else if (this.helicopters.length > 0) {
+      this.helicopters = [];
+    }
+    for (const h of this.helicopters) h.update(dt, this.player.x, this.player.y);
+  }
+
   update(dt) {
     this.time += dt;
     this.player.update(dt, this.input, this.city, this);
@@ -243,6 +256,7 @@ export class Game {
       }
     }
     this.updatePolice(dt);
+    this.updateHelicopters(dt);
     if (this.state !== 'playing') return;
     this.missions.update(dt);
     if (this.missionDelay > 0) {
@@ -323,8 +337,18 @@ export class Game {
       requestAnimationFrame(frame);
       acc += Math.min((now - last) / 1000, MAX_FRAME);
       last = now;
-      this.handleKeys();
-      this.handleMenuClick();
+      // If no fixed step will run this frame while playing, defer input
+      // handling to the next frame: endFrame() clears edge-triggered
+      // presses, so clearing on a step-less frame could drop a keypress
+      // (e.g. E to steal a car) before any update ever saw it. The gate
+      // uses the state at frame start: a press that flips paused -> playing
+      // must still be cleared on that same frame, or it would fire twice.
+      const wasPlaying = this.state === 'playing';
+      const willStep = wasPlaying && acc >= STEP;
+      if (!wasPlaying || willStep) {
+        this.handleKeys();
+        this.handleMenuClick();
+      }
       if (this.state === 'playing') {
         while (acc >= STEP) { this.update(STEP); acc -= STEP; }
       } else {
@@ -337,7 +361,7 @@ export class Game {
         }
       }
       this.renderer.draw(this);
-      this.input.endFrame();
+      if (!wasPlaying || willStep) this.input.endFrame();
     };
     requestAnimationFrame(frame);
   }

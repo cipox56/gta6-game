@@ -296,6 +296,8 @@ export class Renderer {
     } else if (pl.car) {
       drawCarShape(ctx, pl.x, pl.y, pl.angle, 48, 24, pl.car.color, false);
     }
+    // Police helicopters: top layer, above the player.
+    for (const h of game.helicopters) this.drawHelicopter(ctx, game, h);
     // Particles.
     for (const p of game.particles.list) {
       ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
@@ -308,6 +310,70 @@ export class Renderer {
       this.text(t2.text, t2.x, t2.y, 20, t2.color, 'center', true);
     }
     ctx.globalAlpha = 1;
+  }
+
+  drawHelicopter(ctx, game, h) {
+    const pl = game.player;
+    const bob = Math.sin(h.bobPhase) * 6;
+    // Searchlight cone on the ground, from the helicopter toward the player.
+    const a = Math.atan2(pl.y - h.y, pl.x - h.x);
+    const perp = a + Math.PI / 2;
+    const nearW = 26;
+    const farW = 85;
+    const d = Math.hypot(pl.x - h.x, pl.y - h.y);
+    const ux = Math.cos(a);
+    const uy = Math.sin(a);
+    const px = Math.cos(perp);
+    const py = Math.sin(perp);
+    ctx.fillStyle = 'rgba(255, 235, 120, 0.16)';
+    ctx.beginPath();
+    ctx.moveTo(h.x + px * nearW, h.y + py * nearW);
+    ctx.lineTo(h.x - px * nearW, h.y - py * nearW);
+    ctx.lineTo(h.x + ux * d + px * farW, h.y + uy * d + py * farW);
+    ctx.lineTo(h.x + ux * d - px * farW, h.y + uy * d - py * farW);
+    ctx.closePath();
+    ctx.fill();
+    // Soft shadow ellipse on the ground.
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(h.x, h.y, 36, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Body: dark navy ellipse with tail fin and white stripe, bobbing in the air.
+    const by = h.y + bob;
+    ctx.save();
+    ctx.translate(h.x, by);
+    ctx.rotate(h.angle);
+    ctx.fillStyle = '#1b2a4a';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 34, 16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#16223c';
+    ctx.beginPath();
+    ctx.moveTo(-30, 0);
+    ctx.lineTo(-52, -10);
+    ctx.lineTo(-52, 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-30, -3, 58, 6);
+    ctx.fillStyle = '#7fb8e8';
+    ctx.beginPath();
+    ctx.ellipse(14, 0, 9, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Rotating rotor.
+    ctx.strokeStyle = 'rgba(20,20,30,0.85)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(h.rotor) * -44, Math.sin(h.rotor) * -44);
+    ctx.lineTo(Math.cos(h.rotor) * 44, Math.sin(h.rotor) * 44);
+    ctx.stroke();
+    ctx.restore();
+    // Blinking red beacon.
+    const on = Math.sin(game.time * 8) > 0;
+    ctx.fillStyle = on ? '#ff3b30' : '#7a1f1a';
+    ctx.beginPath();
+    ctx.arc(h.x, by - 18, 4, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   landmark(ctx, spot, color, label) {
@@ -354,6 +420,9 @@ export class Renderer {
     roundRect(ctx, CFG.canvasW - 238, 52, 212 * (p.health / CFG.maxHealth), 12, 6);
     ctx.fill();
     this.text(`HP ${Math.ceil(p.health)}`, CFG.canvasW - 26, 42, 13, '#ffffff', 'right');
+    if (game.helicopters.length > 0) {
+      this.text('AIR SUPPORT', CFG.canvasW - 238, 96, 15, '#ff3b30', 'left', true);
+    }
     // Mission timer.
     if (game.missions.phase === 'active' && game.missions.timer > 0) {
       const t = Math.ceil(game.missions.timer);
@@ -411,6 +480,12 @@ export class Renderer {
       ctx.fillStyle = '#0a84ff';
       ctx.beginPath();
       ctx.arc(x0 + pc.x * s, y0 + pc.y * s, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const h of game.helicopters) {
+      ctx.fillStyle = '#ff3b30';
+      ctx.beginPath();
+      ctx.arc(x0 + h.x * s, y0 + h.y * s, 4, 0, Math.PI * 2);
       ctx.fill();
     }
     const p = game.player;
@@ -517,6 +592,7 @@ export class Renderer {
       'Space handbrake. Hitting pedestrians or cops raises heat.',
       'Police chase you while you have stars. Break line of sight',
       'to cool down, or reach the hideout with zero stars.',
+      'At 4 stars and above a police helicopter joins the chase — its searchlight keeps you spotted.',
       'Complete all 6 missions to own Neon Bay. Good luck, Dash.',
     ], [{ id: 'back', label: 'BACK' }]);
   }
