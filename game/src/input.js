@@ -1,53 +1,52 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
-
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
-
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
-
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
-
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+// Keyboard and mouse input: held keys, edge-triggered presses, and click position.
+export class Input {
+  constructor() {
+    this.keys = new Set();
+    this.pressed = new Set();
+    this.mouseX = 0;
+    this.mouseY = 0;
+    this.clicked = false;
+    this.onKey = (e) => {
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      if (!e.repeat) this.pressed.add(k);
+      this.keys.add(k);
+    };
+    this.onKeyUp = (e) => {
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      this.keys.delete(k);
+    };
+    this.onMouse = (e) => {
+      const r = e.target.getBoundingClientRect();
+      this.mouseX = (e.clientX - r.left) * (1280 / r.width);
+      this.mouseY = (e.clientY - r.top) * (720 / r.height);
+      this.clicked = true;
+    };
+  }
+  attach(canvas) {
+    window.addEventListener('keydown', this.onKey);
+    window.addEventListener('keyup', this.onKeyUp);
+    canvas.addEventListener('mousedown', this.onMouse);
+  }
+  down(...names) {
+    return names.some((n) => this.keys.has(n));
+  }
+  wasPressed(...names) {
+    return names.some((n) => this.pressed.has(n));
+  }
+  // Edge-triggered press that is consumed on first read, so one physical press can
+  // never fire twice when the loop runs several fixed steps in a single frame.
+  take(...names) {
+    for (const n of names) {
+      if (this.pressed.has(n)) {
+        this.pressed.delete(n);
+        return true;
+      }
+    }
+    return false;
+  }
+  endFrame() {
+    this.pressed.clear();
+    this.clicked = false;
+  }
 }

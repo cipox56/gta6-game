@@ -1,79 +1,106 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Screenshot scenes behind ?shot=title|chase|street|mission (with &seed=N).
+// Each one arranges the real game state — a live city, real cars, police and HUD —
+// then lets it settle for a few fixed steps so the frame is what play looks like.
+import { TrafficCar, PoliceCar, Pedestrian } from './entities.js';
+import { CAR_COLORS } from './config.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function givePlayerCar(game, x, y, angle, color) {
+  const car = new TrafficCar(x, y, angle, game.rng, true);
+  car.color = color || game.rng.pick(CAR_COLORS);
+  car.parked = false;
+  car.stolen = true;
+  game.traffic.push(car);
+  const p = game.player;
+  p.car = car;
+  p.onFoot = false;
+  p.x = x;
+  p.y = y;
+  p.angle = angle;
+  p.speed = 380;
+  p.carHealth = 100;
+  return car;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+function scatterTraffic(game, cx, cy, count) {
+  for (let i = 0; i < count; i++) {
+    const p = game.city.randomRoadPoint(game.rng);
+    const near = Math.abs(p.x - cx) < 500 && Math.abs(p.y - cy) < 500;
+    const spot = near ? p : { x: cx + game.rng.range(-450, 450), y: cy + game.rng.range(-450, 450) };
+    game.traffic.push(new TrafficCar(spot.x, spot.y, game.rng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]), game.rng, false));
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+function settle(game, steps) {
+  for (let i = 0; i < steps; i++) game.update(1 / 60);
+}
+
+export function stageShot(game, name) {
+  const p = game.player;
+  if (name === 'title') {
+    game.state = 'title';
+    p.x = 1200;
+    p.y = 1200;
+    game.camera.x = 1200;
+    game.camera.y = 1200;
+    scatterTraffic(game, 1200, 1200, 8);
+    return;
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+  if (name === 'street') {
+    game.state = 'playing';
+    p.x = 1200;
+    p.y = 1200;
+    p.onFoot = true;
+    p.angle = Math.PI / 4;
+    game.camera.x = 1200;
+    game.camera.y = 1200;
+    game.missions.start(0);
+    scatterTraffic(game, 1200, 1200, 7);
+    for (let i = 0; i < 10; i++) {
+      game.peds.push(new Pedestrian(1200 + game.rng.range(-260, 260), 1200 + game.rng.range(-260, 260), game.rng));
+    }
+    settle(game, 25);
+    return;
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  if (name === 'mission') {
+    game.state = 'playing';
+    givePlayerCar(game, 1560, 2960, -Math.PI / 2, '#f1c40f');
+    p.cash = 750;
+    game.camera.x = p.x;
+    game.camera.y = p.y;
+    game.missions.index = 1;
+    game.missions.phase = 'done';
+    game.missions.target = null;
+    game.banner('Mission complete!', 'Package Run — you earned $500.', 30);
+    game.particles.confetti(p.x, p.y - 40);
+    scatterTraffic(game, 1600, 2900, 4);
+    settle(game, 12);
+    game.banner('Mission complete!', 'Package Run — you earned $500.', 30);
+    return;
+  }
+  // Default: 'chase' — the cover shot. Driving fast east on the 1200 road, 3 stars,
+  // police on the tail, traffic ahead, mission marker on the minimap.
+  game.state = 'playing';
+  givePlayerCar(game, 1200, 1200, 0, '#e74c3c');
+  game.camera.x = 1200;
+  game.camera.y = 1200;
+  p.addWanted(3);
+  p.cash = 1250;
+  game.missions.index = 1;
+  game.missions.phase = 'active';
+  game.missions.stage = 1;
+  game.missions.timer = 58;
+  game.missions.target = { x: game.city.boardwalk.x, y: game.city.boardwalk.y, label: 'Deliver to the Boardwalk' };
+  scatterTraffic(game, 1200, 1200, 8);
+  for (let i = 0; i < 3; i++) {
+    const pc = new PoliceCar(1200 - 260 - i * 90, 1200 + (i - 1) * 40, game.rng);
+    pc.angle = 0;
+    pc.speed = 380;
+    game.police.push(pc);
+  }
+  game.input.keys.add('w');
+  settle(game, 20);
+  game.input.keys.delete('w');
+  game.camera.x = p.x;
+  game.camera.y = p.y;
+  game.banner('Package secured', 'Lose the cops and deliver it to the boardwalk.', 30);
 }
