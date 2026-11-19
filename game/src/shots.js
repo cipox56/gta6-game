@@ -4,8 +4,8 @@
 import { TrafficCar, PoliceCar, Pedestrian } from './entities.js';
 import { CAR_COLORS } from './config.js';
 
-function givePlayerCar(game, x, y, angle, color) {
-  const car = new TrafficCar(x, y, angle, game.rng, true);
+function givePlayerCar(game, x, y, angle, color, carClass) {
+  const car = new TrafficCar(x, y, angle, game.rng, true, carClass || 'sedan');
   car.color = color || game.rng.pick(CAR_COLORS);
   car.parked = false;
   car.stolen = true;
@@ -17,7 +17,7 @@ function givePlayerCar(game, x, y, angle, color) {
   p.y = y;
   p.angle = angle;
   p.speed = 380;
-  p.carHealth = 100;
+  p.carHealth = p.carHealthMax();
   return car;
 }
 
@@ -47,49 +47,70 @@ export function stageShot(game, name) {
   }
   if (name === 'street') {
     game.state = 'playing';
+    game.daynight.setTime(10); // bright day street
     p.x = 1200;
     p.y = 1200;
     p.onFoot = true;
     p.angle = Math.PI / 4;
+    p.respect = 2;
+    p.cash = 1450;
     game.camera.x = 1200;
     game.camera.y = 1200;
+    game.sportsSpawned = true; // no "Respect pays off" banner mid-shot
     game.missions.start(0);
     scatterTraffic(game, 1200, 1200, 7);
+    // Respect-2 reward on display: a hot-pink sports car parked to steal.
+    const sports = new TrafficCar(1290, 1270, 0, game.rng, true, 'sports');
+    sports.color = '#ff2e88';
+    game.traffic.push(sports);
+    const van = new TrafficCar(1120, 1140, Math.PI / 2, game.rng, false, 'van');
+    game.traffic.push(van);
     for (let i = 0; i < 10; i++) {
       game.peds.push(new Pedestrian(1200 + game.rng.range(-260, 260), 1200 + game.rng.range(-260, 260), game.rng));
     }
     settle(game, 25);
+    game.bannerTitle = ''; // keep the street scene unobstructed
     return;
   }
   if (name === 'mission') {
+    // Neon Nights street race: numbered checkpoints in order, 90-second clock,
+    // sports car, Respect 2 on the HUD.
     game.state = 'playing';
-    givePlayerCar(game, 1560, 2960, -Math.PI / 2, '#f1c40f');
-    p.cash = 750;
+    game.daynight.setTime(17); // golden late afternoon
+    givePlayerCar(game, 1000, 820, 0, '#ff2e88', 'sports');
+    p.cash = 1450;
+    p.respect = 2;
     game.camera.x = p.x;
     game.camera.y = p.y;
-    game.missions.index = 1;
-    game.missions.phase = 'done';
-    game.missions.target = null;
-    game.banner('Mission complete!', 'Package Run — you earned $500.', 30);
-    game.particles.confetti(p.x, p.y - 40);
-    scatterTraffic(game, 1600, 2900, 4);
-    settle(game, 12);
-    game.banner('Mission complete!', 'Package Run — you earned $500.', 30);
+    game.sportsSpawned = true; // no "Respect pays off" banner mid-shot
+    game.missions.start(4); // Neon Nights (race)
+    scatterTraffic(game, 1200, 900, 4);
+    game.input.keys.add('w');
+    settle(game, 15);
+    game.input.keys.delete('w');
+    game.camera.x = p.x;
+    game.camera.y = p.y;
+    game.bannerTitle = ''; // keep the race scene unobstructed
     return;
   }
-  // Default: 'chase' — the cover shot. Driving fast east on the 1200 road, 4 stars,
-  // police on the tail, a helicopter overhead, traffic ahead, mission marker on the minimap.
+  // Default: 'chase' — the cover shot. NEON NIGHT: 10pm, dark overlay, lit windows,
+  // headlight cones, driving fast east on the 1200 road, 4 stars, police on the tail,
+  // a roadblock parked across the road ahead, a helicopter overhead with its
+  // searchlight, traffic ahead, mission marker on the minimap.
   game.state = 'playing';
-  givePlayerCar(game, 1200, 1200, 0, '#e74c3c');
+  game.daynight.setTime(22);
+  givePlayerCar(game, 1200, 1200, 0, '#e74c3c', 'sports');
   game.camera.x = 1200;
   game.camera.y = 1200;
   p.addWanted(4);
   p.cash = 1250;
+  p.respect = 3;
   game.missions.index = 1;
   game.missions.phase = 'active';
   game.missions.stage = 1;
   game.missions.timer = 58;
   game.missions.target = { x: game.city.boardwalk.x, y: game.city.boardwalk.y, label: 'Deliver to the Boardwalk' };
+  game.spawnRoadblocks();
   scatterTraffic(game, 1200, 1200, 8);
   for (let i = 0; i < 3; i++) {
     const pc = new PoliceCar(1200 - 260 - i * 90, 1200 + (i - 1) * 40, game.rng);

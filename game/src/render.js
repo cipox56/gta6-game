@@ -1,6 +1,6 @@
 // Drawing only: the city, the people and cars in it, the HUD, the minimap and the menus.
 // The 1280x720 playfield is scaled to fit the window; the camera follows the player.
-import { CFG, DISTRICTS } from './config.js';
+import { CFG, DISTRICTS, MISSIONS } from './config.js';
 import { clamp } from './random.js';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -15,7 +15,7 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawCarShape(ctx, x, y, angle, w, h, color, police) {
+function drawCarShape(ctx, x, y, angle, w, h, color, police, carClass) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
@@ -26,11 +26,28 @@ function drawCarShape(ctx, x, y, angle, w, h, color, police) {
   roundRect(ctx, -w / 2, -h / 2, w, h, 6);
   ctx.fill();
   ctx.fillStyle = '#1b2a3a';
-  roundRect(ctx, -w / 2 + 8, -h / 2 + 5, w * 0.32, h - 10, 3);
-  ctx.fill();
-  ctx.fillStyle = '#dfe9f5';
-  roundRect(ctx, w * 0.08, -h / 2 + 5, w * 0.18, h - 10, 3);
-  ctx.fill();
+  if (carClass === 'van') {
+    // Boxy van: one big cabin, sliding-door stripe.
+    roundRect(ctx, -w / 2 + 6, -h / 2 + 3, w * 0.55, h - 6, 3);
+    ctx.fill();
+    ctx.fillStyle = '#dfe9f5';
+    ctx.fillRect(w * 0.12, -h / 2 + 3, 4, h - 6);
+  } else if (carClass === 'sports') {
+    // Low-slung sports car: swept cabin and a rear spoiler.
+    roundRect(ctx, -w / 2 + 10, -h / 2 + 4, w * 0.3, h - 8, 3);
+    ctx.fill();
+    ctx.fillStyle = '#dfe9f5';
+    roundRect(ctx, w * 0.06, -h / 2 + 4, w * 0.16, h - 8, 3);
+    ctx.fill();
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(-w / 2 - 4, -h / 2 - 1, 5, h + 2);
+  } else {
+    roundRect(ctx, -w / 2 + 8, -h / 2 + 5, w * 0.32, h - 10, 3);
+    ctx.fill();
+    ctx.fillStyle = '#dfe9f5';
+    roundRect(ctx, w * 0.08, -h / 2 + 5, w * 0.18, h - 10, 3);
+    ctx.fill();
+  }
   ctx.fillStyle = '#ffe9a8';
   ctx.fillRect(w / 2 - 2, -h / 2 + 3, 3, 5);
   ctx.fillRect(w / 2 - 2, h / 2 - 8, 3, 5);
@@ -114,14 +131,16 @@ export class Renderer {
     ctx.clip();
     ctx.translate(W / 2 - cam.x, H / 2 - cam.y);
     this.drawWorld(ctx, game);
+    this.drawNight(ctx, game);
     ctx.restore();
     this.drawHud(ctx, game);
     if (game.state === 'title') this.drawTitle(ctx, game);
     else if (game.state === 'howto') this.drawHowTo(ctx, game);
     else if (game.state === 'paused') this.drawPaused(ctx, game);
+    else if (game.state === 'shop') this.drawShop(ctx, game);
     else if (game.state === 'over') this.drawOver(ctx, game);
     else if (game.state === 'win') this.drawWin(ctx, game);
-    if (game.bannerTitle && game.bannerUntil > game.time) this.drawBanner(ctx, game);
+    if (game.bannerTitle && game.bannerUntil > game.time && game.state !== 'shop') this.drawBanner(ctx, game);
     if (game.player.hurtFlash > 0) {
       ctx.fillStyle = `rgba(255,0,0,${game.player.hurtFlash * 0.35})`;
       ctx.fillRect(0, 0, W, H);
@@ -229,6 +248,21 @@ export class Renderer {
     // Mission target beacon.
     const t = game.missions.target;
     if (t && game.state === 'playing') {
+      // Race: show every checkpoint, numbered — passed green, next pulsing gold.
+      if (game.missions.current && game.missions.current.kind === 'race') {
+        game.missions.racePoints.forEach((cp, i) => {
+          const done = i < game.missions.checkpoint;
+          const next = i === game.missions.checkpoint;
+          ctx.fillStyle = done ? '#2ecc71' : next ? '#f1c40f' : 'rgba(255,255,255,0.5)';
+          ctx.beginPath();
+          ctx.arc(cp.x, cp.y, next ? 34 : 26, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#111111';
+          ctx.font = `700 22px ${FONT}`;
+          ctx.textAlign = 'center';
+          ctx.fillText(String(i + 1), cp.x, cp.y + 8);
+        });
+      }
       const pulse = 1 + Math.sin(game.time * 5) * 0.12;
       ctx.save();
       ctx.translate(t.x, t.y);
@@ -260,7 +294,7 @@ export class Renderer {
     // Traffic and parked cars.
     for (const c of game.traffic) {
       if (c.stolen) continue;
-      drawCarShape(ctx, c.x, c.y, c.angle, c.w, c.h, c.color, false);
+      drawCarShape(ctx, c.x, c.y, c.angle, c.w, c.h, c.color, false, c.carClass);
     }
     // Police.
     for (const p of game.police) {
@@ -270,6 +304,19 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(p.x - Math.cos(p.angle) * 10, p.y - Math.sin(p.angle) * 10, 5, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // Roadblocks: stationary police cars parked across the road, lights flashing.
+    for (const p of game.roadblocks || []) {
+      const flash = Math.sin(p.sirenPhase) > 0;
+      drawCarShape(ctx, p.x, p.y, p.angle, p.w, p.h, p.color, true);
+      ctx.fillStyle = flash ? '#ff3b30' : '#0a84ff';
+      ctx.beginPath();
+      ctx.arc(p.x - Math.cos(p.angle) * 10, p.y - Math.sin(p.angle) * 10, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `700 13px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillText('ROADBLOCK', p.x, p.y - 34);
     }
     // Pedestrians.
     for (const ped of game.peds) {
@@ -294,7 +341,11 @@ export class Renderer {
         ctx.stroke();
       }
     } else if (pl.car) {
-      drawCarShape(ctx, pl.x, pl.y, pl.angle, 48, 24, pl.car.color, false);
+      drawCarShape(ctx, pl.x, pl.y, pl.angle, pl.car.w, pl.car.h, pl.car.color, false, pl.car.carClass);
+    }
+    // Garage shop hint when on foot nearby.
+    if (pl.onFoot && game.state === 'playing' && game.shop && game.shop.constructor.nearGarage(game)) {
+      this.text('Press E — Rosa\'s Garage: upgrades & clean record', pl.x, pl.y - 40, 15, '#2ecc71', 'center', true);
     }
     // Police helicopters: top layer, above the player.
     for (const h of game.helicopters) this.drawHelicopter(ctx, game, h);
@@ -310,6 +361,68 @@ export class Renderer {
       this.text(t2.text, t2.x, t2.y, 20, t2.color, 'center', true);
     }
     ctx.globalAlpha = 1;
+  }
+
+  drawNight(ctx, game) {
+    const dn = game.daynight;
+    if (!dn || dn.darkness <= 0) return;
+    const cam = game.camera;
+    const vx0 = cam.x - CFG.canvasW / 2;
+    const vy0 = cam.y - CFG.canvasH / 2;
+    const vx1 = cam.x + CFG.canvasW / 2;
+    const vy1 = cam.y + CFG.canvasH / 2;
+    // Dark overlay across the whole view.
+    ctx.fillStyle = `rgba(5,8,30,${dn.darkness})`;
+    ctx.fillRect(vx0, vy0, vx1 - vx0, vy1 - vy0);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    // Lit building windows.
+    for (const b of game.city.buildings) {
+      if (b.x > vx1 || b.x + b.w < vx0 || b.y > vy1 || b.y + b.h < vy0) continue;
+      const cols = Math.max(1, Math.floor(b.w / 26));
+      const rows = Math.max(1, Math.floor(b.h / 26));
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          if ((i * 5 + j * 11 + b.floors) % 3 !== 0) continue;
+          ctx.fillStyle = 'rgba(255,205,90,0.55)';
+          ctx.fillRect(b.x + 10 + i * 26, b.y + 10 + j * 26, 12, 12);
+        }
+      }
+    }
+    // Streetlight glow at road intersections.
+    ctx.fillStyle = 'rgba(255,190,80,0.20)';
+    for (let x = 400; x < game.city.size; x += 400) {
+      for (let y = 400; y < game.city.size; y += 400) {
+        if (x < vx0 - 80 || x > vx1 + 80 || y < vy0 - 80 || y > vy1 + 80) continue;
+        ctx.beginPath();
+        ctx.arc(x, y, 70, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Headlight cones: player car plus nearby traffic and police.
+    const cones = [];
+    const p = game.player;
+    if (!p.onFoot && p.car) cones.push({ x: p.x, y: p.y, angle: p.angle });
+    for (const c of game.traffic) {
+      if (!c.parked && !c.stolen && c.x > vx0 && c.x < vx1 && c.y > vy0 && c.y < vy1) cones.push({ x: c.x, y: c.y, angle: c.angle });
+    }
+    for (const pc of game.police) cones.push({ x: pc.x, y: pc.y, angle: pc.angle });
+    for (const pc of game.roadblocks || []) cones.push({ x: pc.x, y: pc.y, angle: pc.angle });
+    ctx.fillStyle = 'rgba(255,240,170,0.10)';
+    for (const cn of cones) {
+      const ux = Math.cos(cn.angle);
+      const uy = Math.sin(cn.angle);
+      const px = -uy;
+      const py = ux;
+      ctx.beginPath();
+      ctx.moveTo(cn.x + ux * 20 + px * 8, cn.y + uy * 20 + py * 8);
+      ctx.lineTo(cn.x + ux * 20 - px * 8, cn.y + uy * 20 - py * 8);
+      ctx.lineTo(cn.x + ux * 190 - px * 55, cn.y + uy * 190 - py * 55);
+      ctx.lineTo(cn.x + ux * 190 + px * 55, cn.y + uy * 190 + py * 55);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   drawHelicopter(ctx, game, h) {
@@ -400,11 +513,20 @@ export class Renderer {
     ctx.fill();
     this.text(`$${p.cash.toLocaleString('en-US')}`, 26, 40, 26, '#2ecc71', 'left', true);
     const m = game.missions.current;
-    const mLabel = game.missions.allDone ? 'All missions complete!' : m ? `${game.missions.index + 1}/6 ${m.title}` : 'Free roam';
+    const mLabel = game.missions.allDone ? 'All missions complete!' : m ? `${game.missions.index + 1}/${MISSIONS.length} ${m.title}` : 'Free roam';
     this.text(mLabel, 26, 64, 15, '#ffffff', 'left');
     if (game.missions.phase === 'active' && game.missions.target) {
       this.text(`▸ ${game.missions.target.label}`, 26, 86, 15, '#f1c40f', 'left');
     }
+    // Respect / radio / clock chip under the mission panel.
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    roundRect(ctx, 12, 108, 400, 30, 10);
+    ctx.fill();
+    let respectStars = '';
+    for (let i = 0; i < CFG.maxRespect; i++) respectStars += i < Math.floor(p.respect) ? '◆' : '◇';
+    this.text(`${respectStars} Respect ${Math.floor(p.respect)}/${CFG.maxRespect}`, 26, 129, 14, '#ff9ff3', 'left', true);
+    this.text(`♪ ${game.sound.station.name}`, 212, 129, 14, '#ffffff', 'left');
+    this.text(game.daynight.label, 398, 129, 14, '#ffffff', 'right');
     // Top-right: wanted stars + health.
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     roundRect(ctx, CFG.canvasW - 252, 12, 240, 64, 10);
@@ -428,15 +550,22 @@ export class Renderer {
       const t = Math.ceil(game.missions.timer);
       this.text(`${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`, CFG.canvasW / 2, 44, 30, t < 15 ? '#ff6b6b' : '#ffffff', 'center', true);
     }
-    // Speed when driving.
+    // Speed + car health when driving.
     if (!p.onFoot) {
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      roundRect(ctx, 12, CFG.canvasH - 58, 150, 46, 10);
+      roundRect(ctx, 12, CFG.canvasH - 92, 170, 60, 10);
       ctx.fill();
-      this.text(`${Math.round(Math.abs(p.speed) * 0.36)} km/h`, 26, CFG.canvasH - 26, 22, '#ffffff', 'left', true);
+      this.text(`${Math.round(Math.abs(p.speed) * 0.36)} km/h`, 26, CFG.canvasH - 60, 22, '#ffffff', 'left', true);
+      this.text(`${p.carClass().toUpperCase()} · CAR`, 26, CFG.canvasH - 38, 12, '#cfd8dc', 'left');
+      ctx.fillStyle = '#333';
+      roundRect(ctx, 96, CFG.canvasH - 48, 66, 9, 4);
+      ctx.fill();
+      ctx.fillStyle = p.carHealth > 30 ? '#2ecc71' : '#e74c3c';
+      roundRect(ctx, 96, CFG.canvasH - 48, 66 * Math.max(0, p.carHealth / p.carHealthMax()), 9, 4);
+      ctx.fill();
     }
     // Controls hint.
-    this.text('WASD move/drive · E enter car · Space punch/brake · Shift run · P pause · M mute', 14, CFG.canvasH - 12, 13, 'rgba(255,255,255,0.65)', 'left');
+    this.text('WASD move/drive · E enter car / garage shop · Space punch/brake · Shift run · Q radio · P pause · M mute', 14, CFG.canvasH - 12, 13, 'rgba(255,255,255,0.65)', 'left');
     this.drawMinimap(ctx, game);
   }
 
@@ -482,6 +611,12 @@ export class Renderer {
       ctx.arc(x0 + pc.x * s, y0 + pc.y * s, 4, 0, Math.PI * 2);
       ctx.fill();
     }
+    for (const pc of game.roadblocks || []) {
+      ctx.fillStyle = '#ff9f43';
+      ctx.beginPath();
+      ctx.arc(x0 + pc.x * s, y0 + pc.y * s, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
     for (const h of game.helicopters) {
       ctx.fillStyle = '#ff3b30';
       ctx.beginPath();
@@ -510,7 +645,7 @@ export class Renderer {
       else lines[lines.length - 1] = trial;
     }
     const h = 52 + lines.length * 24;
-    const y0 = 92;
+    const y0 = 150;
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
     roundRect(ctx, CFG.canvasW / 2 - 330, y0, 660, h, 12);
     ctx.fill();
@@ -558,7 +693,7 @@ export class Renderer {
     this.text('NEON BAY', CFG.canvasW / 2, 150, 84, '#f1c40f', 'center', true);
     this.text('HEIST', CFG.canvasW / 2, 225, 84, '#ff6b9d', 'center', true);
     this.text('An original open-world crime game — drive, steal, run missions, outrun the law.', CFG.canvasW / 2, 268, 18, '#ffffff', 'center');
-    this.text('Sun-soaked streets. Six story missions. One last big score.', CFG.canvasW / 2, 294, 16, '#cfd8dc', 'center');
+    this.text('Eight story missions · garage upgrades · respect · roadblocks · radio · day & night', CFG.canvasW / 2, 294, 16, '#cfd8dc', 'center');
     const buttons = [{ id: 'start', label: '▶  START GAME' }];
     if (game.saveExists) buttons.push({ id: 'continue', label: 'CONTINUE (saved game)' });
     buttons.push({ id: 'howto', label: 'HOW TO PLAY' });
@@ -579,6 +714,51 @@ export class Renderer {
     this.text('A fan-made original. Not affiliated with Rockstar Games.', CFG.canvasW / 2, CFG.canvasH - 24, 13, 'rgba(255,255,255,0.55)', 'center');
   }
 
+  drawShop(ctx, game) {
+    const p = game.player;
+    ctx.fillStyle = 'rgba(5,8,20,0.72)';
+    ctx.fillRect(0, 0, CFG.canvasW, CFG.canvasH);
+    const x0 = CFG.canvasW / 2 - 360;
+    const y0 = 56;
+    const w = 720;
+    const h = 608;
+    ctx.fillStyle = 'rgba(16,20,36,0.97)';
+    roundRect(ctx, x0, y0, w, h, 16);
+    ctx.fill();
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = 2;
+    roundRect(ctx, x0, y0, w, h, 16);
+    ctx.stroke();
+    this.text("ROSA'S GARAGE", CFG.canvasW / 2, y0 + 44, 34, '#2ecc71', 'center', true);
+    this.text(`Cash $${p.cash.toLocaleString('en-US')} · Respect ${Math.floor(p.respect)}/${CFG.maxRespect} · Car: ${p.car ? p.carClass().toUpperCase() : 'on foot'}`, CFG.canvasW / 2, y0 + 72, 15, '#e8ecf1', 'center');
+    this.menuButtons = [];
+    let y = y0 + 96;
+    for (const item of game.shop.items) {
+      const blocked = game.shop.canBuy(game, item);
+      const owned = item.kind !== 'clean' && game.shop.tier(p, item.kind) >= item.tier;
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      roundRect(ctx, x0 + 20, y, w - 40, 52, 8);
+      ctx.fill();
+      this.text(item.name, x0 + 36, y + 22, 17, '#ffffff', 'left', true);
+      this.text(blocked || item.desc, x0 + 36, y + 44, 13, blocked ? '#ff7675' : '#b2bec3', 'left');
+      const status = owned ? 'OWNED' : blocked ? 'LOCKED' : `$${item.price}`;
+      const bx = x0 + w - 170;
+      ctx.fillStyle = owned ? '#636e72' : blocked ? '#636e72' : '#2ecc71';
+      roundRect(ctx, bx, y + 8, 130, 36, 8);
+      ctx.fill();
+      this.text(status, bx + 65, y + 32, 15, '#ffffff', 'center', true);
+      if (!owned && !blocked) this.menuButtons.push({ id: `buy:${item.id}`, x: bx, y: y + 8, w: 130, h: 36 });
+      y += 60;
+    }
+    const bw = 300;
+    const bx = CFG.canvasW / 2 - bw / 2;
+    ctx.fillStyle = '#f1c40f';
+    roundRect(ctx, bx, y + 4, bw, 44, 10);
+    ctx.fill();
+    this.text('CLOSE (E)', CFG.canvasW / 2, y + 33, 19, '#111111', 'center', true);
+    this.menuButtons.push({ id: 'close-shop', x: bx, y: y + 4, w: bw, h: 44 });
+  }
+
   drawHowTo(ctx, game) {
     this.panel(ctx, 'HOW TO PLAY', [
       'You are Dash Cole, a wheelman new to Neon Bay.',
@@ -592,14 +772,20 @@ export class Renderer {
       'Space handbrake. Hitting pedestrians or cops raises heat.',
       'Police chase you while you have stars. Break line of sight',
       'to cool down, or reach the hideout with zero stars.',
+      'At 3 stars the PCPD sets up roadblocks across the road ahead.',
       'At 4 stars and above a police helicopter joins the chase — its searchlight keeps you spotted.',
-      'Complete all 6 missions to own Neon Bay. Good luck, Dash.',
+      'Spend mission cash at Rosa\'s Garage (press E on foot nearby):',
+      'engine and armor upgrades, grip tires, or a clean record.',
+      'Finishing missions earns Respect — at Respect 2 a sports car',
+      'waits at the marina, at Respect 3 the top engine tune unlocks.',
+      'Press Q to change the radio station. Day turns to neon night.',
+      'Complete all 8 missions to own Neon Bay. Good luck, Dash.',
     ], [{ id: 'back', label: 'BACK' }]);
   }
 
   drawPaused(ctx, game) {
     this.panel(ctx, 'PAUSED', [
-      `Cash $${game.player.cash.toLocaleString('en-US')} · Mission ${Math.min(game.missions.index + 1, 6)}/6`,
+      `Cash $${game.player.cash.toLocaleString('en-US')} · Mission ${Math.min(game.missions.index + 1, MISSIONS.length)}/${MISSIONS.length}`,
       'Take a breath. Neon Bay will wait.',
       '',
       'P — resume · R — restart · M — mute',
@@ -610,7 +796,7 @@ export class Renderer {
     const busted = game.overReason === 'busted';
     this.panel(ctx, busted ? 'BUSTED!' : 'WASTED!', [
       busted ? 'Detective Hale finally caught up with you.' : 'Neon Bay chewed you up, Dash.',
-      `Cash kept: $${game.player.cash.toLocaleString('en-US')} · Missions done: ${game.missions.index}/6`,
+      `Cash kept: $${game.player.cash.toLocaleString('en-US')} · Missions done: ${game.missions.index}/${MISSIONS.length}`,
       '',
       'Press Enter or click below to try again.',
     ], [{ id: 'restart', label: 'TRY AGAIN' }, { id: 'title', label: 'MAIN MENU' }]);
@@ -618,7 +804,7 @@ export class Renderer {
 
   drawWin(ctx, game) {
     this.panel(ctx, 'YOU OWN NEON BAY!', [
-      'Six missions. One big score. The yacht is yours, Dash.',
+      'Eight missions. One big score. The yacht is yours, Dash.',
       `Final cash: $${game.player.cash.toLocaleString('en-US')}`,
       '',
       'Thanks for playing Neon Bay Heist.',

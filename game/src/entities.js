@@ -1,5 +1,5 @@
 // Everyone else in Neon Bay: pedestrians, traffic cars and police pursuit cars.
-import { CFG, CAR_COLORS, PED_SHIRTS } from './config.js';
+import { CFG, CAR_COLORS, PED_SHIRTS, CAR_CLASSES } from './config.js';
 import { clamp, dist2, angleLerp } from './random.js';
 
 export class Pedestrian {
@@ -43,16 +43,20 @@ export class Pedestrian {
 }
 
 export class TrafficCar {
-  constructor(x, y, angle, rng, parked) {
+  constructor(x, y, angle, rng, parked, carClass) {
     this.x = x;
     this.y = y;
     this.angle = angle;
+    // Vehicle class: 'sedan' (balanced), 'sports' (fast, fragile) or 'van' (slow, tough).
+    this.carClass = carClass || 'sedan';
+    const spec = CAR_CLASSES[this.carClass];
     this.speed = parked ? 0 : 130 + rng.next() * 70;
-    this.maxSpeed = 130 + rng.next() * 70;
-    this.color = rng.pick(CAR_COLORS);
+    this.maxSpeed = this.carClass === 'sports' ? 260 : this.carClass === 'van' ? 150 : 130 + rng.next() * 70;
+    this.color = this.carClass === 'sports' ? rng.pick(['#ff2e88', '#ff5c1f', '#00e5ff', '#f1c40f']) : rng.pick(CAR_COLORS);
     this.parked = !!parked;
-    this.w = 46;
-    this.h = 22;
+    this.w = spec.w;
+    this.h = spec.h;
+    this.healthMax = spec.health;
     this.stolen = false;
     this.turnTimer = 0;
   }
@@ -104,8 +108,10 @@ export class PoliceCar {
     this.w = 48;
     this.h = 23;
     this.sirenPhase = rng.next() * 6;
+    this.roadblock = false; // roadblock cars park across the road and never move
   }
   update(dt, city, tx, ty) {
+    if (this.roadblock) { this.sirenPhase += dt * 6; return; }
     // Pursuit steering: aim at the target, accelerate, ram on contact.
     const want = Math.atan2(ty - this.y, tx - this.x);
     this.angle = angleLerp(this.angle, want, Math.min(1, dt * 3.2));

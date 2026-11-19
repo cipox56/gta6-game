@@ -8,6 +8,23 @@ export class SoundEngine {
     this.musicStep = 0;
     this.sirenNodes = null;
     this.engineNodes = null;
+    // Radio stations: Q cycles. Each has its own tempo, bass line and wave,
+    // so the music mood changes with the station.
+    this.stations = [
+      { name: 'NEON FM', desc: 'synthwave', interval: 165, wave: 'sawtooth', vol: 0.11, bass: [55, 0, 55, 65.4, 82.4, 0, 73.4, 98], arp: [220, 261.6, 329.6, 440] },
+      { name: 'BAY BEATS', desc: 'funk', interval: 235, wave: 'triangle', vol: 0.16, bass: [82.4, 0, 98, 0, 110, 82.4, 0, 65.4], arp: [0, 0, 0, 0] },
+      { name: 'TALK 101', desc: 'talk radio bed', interval: 340, wave: 'sine', vol: 0.08, bass: [110, 0, 0, 110, 0, 0, 130.8, 0], arp: [0, 0, 0, 0] },
+    ];
+    this.stationIndex = 0;
+  }
+  get station() {
+    return this.stations[this.stationIndex];
+  }
+  cycleStation() {
+    this.stationIndex = (this.stationIndex + 1) % this.stations.length;
+    this.musicStep = 0;
+    if (this.musicTimer) { clearInterval(this.musicTimer); this.musicTimer = null; this.startMusic(); }
+    return this.station.name;
   }
   ensure() {
     if (this.ctx) {
@@ -117,15 +134,17 @@ export class SoundEngine {
   }
   startMusic() {
     if (!this.ctx || this.musicTimer) return;
-    // Simple sun-soaked groove: bass line + hats on a 8-step loop.
-    const bass = [55, 0, 55, 65.4, 55, 0, 82.4, 73.4];
+    // The current radio station drives tempo, wave and bass line.
+    const st = this.station;
     this.musicTimer = setInterval(() => {
       if (this.muted) return;
-      const f = bass[this.musicStep % bass.length];
-      if (f) this.tone(f, 0.22, 'triangle', 0.16);
+      const f = st.bass[this.musicStep % st.bass.length];
+      if (f) this.tone(f, 0.22, st.wave, st.vol);
+      const arp = st.arp[this.musicStep % st.arp.length];
+      if (arp && this.musicStep % 2 === 0) this.tone(arp, 0.12, 'square', 0.04);
       if (this.musicStep % 2 === 0) this.noise(0.03, 0.05, 6000);
       this.musicStep++;
-    }, 210);
+    }, st.interval);
   }
   stopMusic() {
     if (this.musicTimer) { clearInterval(this.musicTimer); this.musicTimer = null; }

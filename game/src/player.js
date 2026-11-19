@@ -1,5 +1,5 @@
 // Dash Cole: on foot and behind the wheel. Health, cash, wanted level and car handling.
-import { CFG } from './config.js';
+import { CFG, CAR_CLASSES } from './config.js';
 import { clamp, dist2 } from './random.js';
 
 export class Player {
@@ -19,6 +19,28 @@ export class Player {
     this.punchCooldown = 0;
     this.hurtFlash = 0;
     this.carHealth = 100;
+    this.respect = 0; // 0..5 reputation: grows with missions and fares
+    this.upgrades = { engine: 0, armor: 0, tires: 0 }; // garage tiers, persist in save
+  }
+
+  addRespect(n) {
+    this.respect = clamp(this.respect + n, 0, CFG.maxRespect);
+  }
+
+  // Stats of the car currently driven, including class and garage upgrades.
+  carClass() {
+    return (this.car && this.car.carClass) || 'sedan';
+  }
+  carTopSpeed() {
+    const base = CAR_CLASSES[this.carClass()].topSpeed;
+    return base + (this.upgrades.engine || 0) * 60;
+  }
+  carHealthMax() {
+    const base = CAR_CLASSES[this.carClass()].health;
+    return base + (this.upgrades.armor || 0) * 40;
+  }
+  carTurn() {
+    return CFG.carTurn * (1 + (this.upgrades.tires || 0) * 0.25);
   }
 
   addWanted(n) {
@@ -85,10 +107,10 @@ export class Player {
     if (rev) this.speed -= (this.speed > 10 ? CFG.carBrake : CFG.carAccel * 0.6) * dt;
     if (!fwd && !rev) this.speed -= this.speed * CFG.carDrag * dt;
     if (handbrake) this.speed -= this.speed * 3 * dt;
-    this.speed = clamp(this.speed, -CFG.carReverseMax, CFG.carMaxSpeed);
+    this.speed = clamp(this.speed, -CFG.carReverseMax, this.carTopSpeed());
     const dir = this.speed >= 0 ? 1 : -1;
     const grip = handbrake ? 1.8 : 1;
-    this.angle += steer * CFG.carTurn * grip * (Math.min(Math.abs(this.speed), 300) / 300) * dir * dt;
+    this.angle += steer * this.carTurn() * grip * (Math.min(Math.abs(this.speed), 300) / 300) * dir * dt;
     const nx = this.x + Math.cos(this.angle) * this.speed * dt;
     const ny = this.y + Math.sin(this.angle) * this.speed * dt;
     this.x = nx;

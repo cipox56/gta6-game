@@ -16,6 +16,9 @@ export class MissionManager {
     this.holdTimer = 0;
     this.surviveTimer = 0;
     this.message = '';
+    this.checkpoint = 0; // race: next checkpoint index
+    this.smashes = 0; // smash: police cars smashed so far
+    this.racePoints = [];
   }
 
   get current() {
@@ -35,6 +38,9 @@ export class MissionManager {
     this.holdTimer = 0;
     this.surviveTimer = 0;
     this.faresDone = 0;
+    this.checkpoint = 0;
+    this.smashes = 0;
+    this.racePoints = [];
     this.message = m.brief;
     this.setTargetForStage();
     this.game.banner(m.title, m.brief, 5);
@@ -47,6 +53,17 @@ export class MissionManager {
     if (!m) { this.target = null; return; }
     const c = g.city;
     if (m.kind === 'deliver-car') this.target = { x: c.garage.x, y: c.garage.y, label: "Rosa's Garage" };
+    else if (m.kind === 'race') {
+      // Five checkpoints in order, weaving through the city grid.
+      this.racePoints = [
+        { x: 1200, y: 800, label: 'Checkpoint 1/5' },
+        { x: 2400, y: 1200, label: 'Checkpoint 2/5' },
+        { x: 800, y: 2000, label: 'Checkpoint 3/5' },
+        { x: 2000, y: 2400, label: 'Checkpoint 4/5' },
+        { x: 1600, y: 3050, label: 'Finish — Boardwalk 5/5' },
+      ];
+      this.target = this.racePoints[this.checkpoint];
+    } else if (m.kind === 'smash') this.target = { x: g.player.x, y: g.player.y, label: `Smash police cars: ${this.smashes}/3` };
     else if (m.kind === 'pickup-deliver') this.target = this.stage === 0 ? { x: c.marina.x, y: c.marina.y, label: 'Pick up the package' } : { x: c.boardwalk.x, y: c.boardwalk.y, label: 'Deliver to the Boardwalk' };
     else if (m.kind === 'pickup-escape') this.target = this.stage === 0 ? { x: 1200, y: 800, label: 'Pick up Milo' } : { x: c.hideout.x, y: c.hideout.y, label: 'Reach the Hideout' };
     else if (m.kind === 'fares') {
@@ -76,6 +93,23 @@ export class MissionManager {
       this.target = { x: p.x, y: p.y, label: `Survive! ${Math.ceil(60 - this.surviveTimer)}s` };
       return;
     }
+    if (m.kind === 'race') {
+      // Arrive at checkpoints in order; the mission timer is the race clock.
+      if (this.target && dist2(p.x, p.y, this.target.x, this.target.y) < 80 * 80) {
+        this.checkpoint += 1;
+        g.sound.pickup();
+        g.particles.confetti(p.x, p.y - 20);
+        if (this.checkpoint >= this.racePoints.length) { this.complete(); return; }
+        this.target = this.racePoints[this.checkpoint];
+        g.banner(`Checkpoint ${this.checkpoint + 1}/5`, this.target.label, 2);
+      }
+      return;
+    }
+    if (m.kind === 'smash') {
+      this.target = { x: p.x, y: p.y, label: `Smash police cars: ${this.smashes}/3` };
+      if (this.smashes >= 3) { this.complete(); return; }
+      return;
+    }
     if (m.kind === 'heist' && this.stage === 0 && this.target && dist2(p.x, p.y, this.target.x, this.target.y) < 70 * 70) {
       // Holding the vault: stand in the circle while the timer runs.
       this.holdTimer += dt;
@@ -103,7 +137,11 @@ export class MissionManager {
     const g = this.game;
     const m = this.current;
     if (m.kind === 'deliver-car') {
-      if (!g.player.car) { g.banner('Need wheels', 'You must arrive in a car. Steal one first!', 3); return; }
+      if (!g.player.car) {
+        // Remind at most once per banner lifetime, not every frame.
+        if (g.time >= g.bannerUntil) g.banner('Need wheels', 'You must arrive in a car. Steal one first!', 3);
+        return;
+      }
       this.complete();
     } else if (m.kind === 'pickup-deliver') {
       if (this.stage === 0) {
@@ -127,6 +165,7 @@ export class MissionManager {
       } else {
         this.faresDone += 1;
         g.player.cash += 150;
+        g.player.addRespect(0.5);
         g.particles.addText(g.player.x, g.player.y - 30, '+$150 fare', '#2ecc71');
         g.sound.coin();
         if (this.faresDone >= this.faresTotal) this.complete();
@@ -141,10 +180,11 @@ export class MissionManager {
     const g = this.game;
     const m = this.current;
     g.player.cash += m.reward;
+    g.player.addRespect(1); // every finished job builds your name in Neon Bay
     g.particles.confetti(g.player.x, g.player.y - 20);
     g.particles.addText(g.player.x, g.player.y - 40, `+$${m.reward}`, '#f1c40f');
     g.sound.jingle();
-    g.banner('Mission complete!', `${m.title} — you earned $${m.reward}.`, 4);
+    g.banner('Mission complete!', `${m.title} — you earned $${m.reward}. Respect ${g.player.respect}/5.`, 4);
     this.phase = 'done';
     this.index += 1;
     this.target = null;

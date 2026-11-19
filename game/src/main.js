@@ -1,7 +1,7 @@
 // Boot and the one loop: fixed 1/60 s steps, camera, police director, car stealing,
 // collisions, save/load and the menu states. ?shot=chase|street|mission|title stages a
 // screenshot scene instead of running the loop.
-import { CFG } from './config.js';
+import { CFG, MISSIONS } from './config.js';
 import { Rng } from './random.js';
 import { City } from './world.js';
 import { Pedestrian, TrafficCar, PoliceCar, Helicopter } from './entities.js';
@@ -13,6 +13,8 @@ import { Input } from './input.js';
 import { Renderer } from './render.js';
 import { stageShot } from './shots.js';
 import { CAR_COLORS } from './config.js';
+import { Shop } from './shop.js';
+import { DayNight } from './daynight.js';
 
 const STEP = 1 / 60;
 const MAX_FRAME = 0.25;
@@ -30,6 +32,10 @@ export class Game {
     this.particles = new Particles();
     this.sound = new SoundEngine();
     this.missions = new MissionManager(this);
+    this.shop = new Shop();
+    this.daynight = new DayNight();
+    this.roadblocks = [];
+    this.sportsSpawned = false;
     this.camera = { x: this.player.x, y: this.player.y };
     this.state = 'title';
     this.time = 0;
@@ -53,7 +59,9 @@ export class Game {
   spawnTraffic() {
     for (let i = 0; i < 12; i++) {
       const p = this.city.randomRoadPoint(this.rng);
-      this.traffic.push(new TrafficCar(p.x, p.y, this.rng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]), this.rng, false));
+      // A couple of vans in the mix so all three vehicle classes are on the road.
+      const cls = i % 6 === 0 ? 'van' : 'sedan';
+      this.traffic.push(new TrafficCar(p.x, p.y, this.rng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]), this.rng, false, cls));
     }
     for (let i = 0; i < 6; i++) {
       const s = this.city.randomParkedSpot(this.rng);
@@ -71,6 +79,9 @@ export class Game {
     this.player = new Player(this.city.garage.x + 120, this.city.garage.y + 40);
     this.police = [];
     this.helicopters = [];
+    this.roadblocks = [];
+    this.sportsSpawned = false;
+    this.daynight.setTime(10);
     this.particles = new Particles();
     this.missions = new MissionManager(this);
     this.state = 'playing';
@@ -84,7 +95,10 @@ export class Game {
     this.startNew();
     if (save) {
       this.player.cash = save.cash || 0;
-      this.missions.start(Math.min(save.missionIndex || 0, 5));
+      this.player.respect = save.respect || 0;
+      this.player.upgrades = save.upgrades || { engine: 0, armor: 0, tires: 0 };
+      if (save.stationIndex != null) this.sound.stationIndex = save.stationIndex;
+      this.missions.start(Math.min(save.missionIndex || 0, MISSIONS.length - 1));
     }
   }
   loadSave() {
@@ -96,7 +110,13 @@ export class Game {
   }
   save() {
     try {
-      window.localStorage.setItem(CFG.saveKey, JSON.stringify({ cash: this.player.cash, missionIndex: this.missions.index }));
+      window.localStorage.setItem(CFG.saveKey, JSON.stringify({
+        cash: this.player.cash,
+        missionIndex: this.missions.index,
+        respect: this.player.respect,
+        upgrades: this.player.upgrades,
+        stationIndex: this.sound.stationIndex,
+      }));
     } catch (e) { /* storage unavailable */ }
   }
   clearSave() {
@@ -119,7 +139,7 @@ export class Game {
     player.onFoot = false;
     player.angle = best.angle;
     player.speed = 0;
-    player.carHealth = 100;
+    player.carHealth = player.carHealthMax();
     this.sound.blip();
     if (!wasParked) {
       player.addWanted(1);
@@ -195,6 +215,14 @@ export class Game {
       const d2 = (pc.x - this.player.x) ** 2 + (pc.y - this.player.y) ** 2;
       if (d2 < 44 * 44 && this.ramCooldown <= 0) {
         this.ramCooldown = 0.8;
+        // Heat Wave mission: ramming a police car at speed smashes it.
+        if (!this.player.onFoot && Math.abs(this.player.speed) > 150
+          && this.missions.current && this.missions.current.kind === 'smash' && !pc.smashed) {
+          pc.smashed = true;
+          this.missions.smashes += 1;
+          this.particles.burst(pc.x, pc.y, '#ff6b6b', 20, 200);
+          this.banner('Police car smashed!', `${this.missions.smashes}/3 — keep hitting them!`, 2);
+        }
         if (this.player.onFoot) {
           this.gameOver('busted');
           return;
@@ -206,6 +234,63 @@ export class Game {
         if (this.player.carHealth <= 0) this.onCrash(999);
       }
     }
+  }
+
+  // Police roadblocks: at 3+ stars two police cars park across the road ahead
+  // of the player's heading. They despawn when the heat drops below 3.
+  spawnRoadblocks() {
+    const p = this.player;
+    const fx = Math.cos(p.angle);
+    const fy = Math.sin(p.angle);
+    const px = -fy;
+    const py = fx;
+    const ahead = 330;
+    for (const side of [-1, 1]) {
+      const pc = new PoliceCar(p.x + fx * ahead + px * side * 32, p.y + fy * ahead + py * side * 32, this.rng);
+      pc.angle = Math.atan2(fy, fx) + Math.PI / 2; // parked across the road
+      pc.roadblock = true;
+      this.roadblocks.push(pc);
+    }
+  }
+  updateRoadblocks(dt) {
+    const want = this.player.wanted;
+    if (want >= 3 && this.roadblocks.length === 0) {
+      this.spawnRoadblocks();
+      this.banner('Roadblock ahead!', 'PCPD set up a roadblock. Ram through it or go around.', 3);
+    } else if (want < 3 && this.roadblocks.length > 0) {
+      this.roadblocks = [];
+    }
+    for (const pc of this.roadblocks) pc.update(dt, this.city, 0, 0);
+    this.ramCooldown = Math.max(0, this.ramCooldown - dt);
+    for (const pc of this.roadblocks) {
+      const d2 = (pc.x - this.player.x) ** 2 + (pc.y - this.player.y) ** 2;
+      if (d2 < 48 * 48 && this.ramCooldown <= 0) {
+        this.ramCooldown = 0.8;
+        if (!this.player.onFoot && Math.abs(this.player.speed) > 150
+          && this.missions.current && this.missions.current.kind === 'smash' && !pc.smashed) {
+          pc.smashed = true;
+          this.missions.smashes += 1;
+          this.particles.burst(pc.x, pc.y, '#ff6b6b', 20, 200);
+          this.banner('Police car smashed!', `${this.missions.smashes}/3 — keep hitting them!`, 2);
+        }
+        if (this.player.onFoot) { this.gameOver('busted'); return; }
+        this.player.takeDamage(10, this);
+        this.player.carHealth = Math.max(0, this.player.carHealth - 15);
+        this.player.speed *= 0.3;
+        this.sound.crash();
+        this.particles.burst(this.player.x, this.player.y, '#74b9ff', 14, 150);
+        if (this.player.carHealth <= 0) this.onCrash(999);
+      }
+    }
+  }
+
+  // Respect ≥2: a sports car appears parked at the marina, free to steal.
+  maybeSpawnSportsCar() {
+    if (this.sportsSpawned || this.player.respect < 2) return;
+    this.sportsSpawned = true;
+    const car = new TrafficCar(this.city.marina.x + 60, this.city.marina.y - 40, 0, this.rng, true, 'sports');
+    this.traffic.push(car);
+    this.banner('Respect pays off', 'A sports car is parked at the marina — yours if you can take it.', 4);
   }
 
   updateHelicopters(dt) {
@@ -221,6 +306,7 @@ export class Game {
 
   update(dt) {
     this.time += dt;
+    this.daynight.update(dt);
     this.player.update(dt, this.input, this.city, this);
     // Pedestrians: flee from a speeding player car, get hit by it.
     const danger = !this.player.onFoot && Math.abs(this.player.speed) > 120;
@@ -256,7 +342,9 @@ export class Game {
       }
     }
     this.updatePolice(dt);
+    this.updateRoadblocks(dt);
     this.updateHelicopters(dt);
+    this.maybeSpawnSportsCar();
     if (this.state !== 'playing') return;
     this.missions.update(dt);
     if (this.missionDelay > 0) {
@@ -271,7 +359,7 @@ export class Game {
     this.camera.y += (ty - this.camera.y) * Math.min(1, dt * 5);
     this.particles.update(dt);
     // Audio follows the action.
-    this.sound.engine(this.player.onFoot ? 0 : Math.abs(this.player.speed) / CFG.carMaxSpeed);
+    this.sound.engine(this.player.onFoot ? 0 : Math.abs(this.player.speed) / this.player.carTopSpeed());
     this.sound.siren(this.player.wanted > 0 && this.state === 'playing');
   }
 
@@ -298,6 +386,8 @@ export class Game {
         else if (b.id === 'resume') this.state = 'playing';
         else if (b.id === 'restart') this.startNew();
         else if (b.id === 'title') { this.state = 'title'; this.saveExists = !!this.loadSave(); }
+        else if (b.id === 'close-shop') this.state = 'playing';
+        else if (b.id.startsWith('buy:')) this.shop.buy(this, b.id.slice(4));
         return;
       }
     }
@@ -315,6 +405,21 @@ export class Game {
     }
     if (this.state === 'over' || this.state === 'win') {
       if (input.wasPressed('Enter', ' ')) this.startNew();
+      return;
+    }
+    if (this.state === 'shop') {
+      if (input.wasPressed('p', 'Escape', 'e', 'Enter')) this.state = 'playing';
+      return;
+    }
+    if (input.wasPressed('q') && this.state === 'playing') {
+      const name = this.sound.cycleStation();
+      this.banner('Radio', `♪ ${name} — ${this.sound.station.desc}`, 2);
+    }
+    // E near Rosa's Garage (on foot) opens the upgrade shop instead of stealing a car.
+    if (this.state === 'playing' && input.wasPressed('e') && Shop.nearGarage(this)) {
+      this.state = 'shop';
+      input.pressed.delete('e');
+      this.sound.blip();
       return;
     }
     if (input.wasPressed('p', 'Escape')) {
@@ -381,6 +486,7 @@ window.addEventListener('error', (e) => {
 
 if (shot) {
   const game = new Game(seed);
+  window.__game = game; // debug handle used by automated play-tests
   const canvas = document.getElementById('game');
   game.input = new Input();
   game.input.attach(canvas);
